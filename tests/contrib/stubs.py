@@ -4,8 +4,9 @@ import time
 from nose.tools import assert_raises, assert_equal, assert_true
 
 from pycassa import index, ColumnFamily, ConnectionPool,\
-                    NotFoundException
+                    NotFoundException, SystemManager
 from pycassa.contrib.stubs import ColumnFamilyStub, ConnectionPoolStub
+from pycassa.types import CompositeType, LongType, AsciiType
 from pycassa.util import convert_time_to_uuid
 
 pool = cf = indexed_cf = None
@@ -13,7 +14,7 @@ pool_stub = cf_stub = indexed_cf_stub = None
 
 
 def setup_module():
-    global pool, cf, indexed_cf, pool_stub, indexed_cf_stub, cf_stub
+    global pool, cf, indexed_cf, pool_stub, indexed_cf_stub, cf_stub, composite_cf, composite_cf_stub
     credentials = {'username': 'jsmith', 'password': 'havebadpass'}
     pool = ConnectionPool(keyspace='PycassaTestKeyspace',
             credentials=credentials, timeout=1.0)
@@ -24,11 +25,22 @@ def setup_module():
             credentials=credentials, timeout=1.0)
     cf_stub = ColumnFamilyStub(pool_stub, 'Standard1', dict_class=TestDict)
     indexed_cf_stub = ColumnFamilyStub(pool_stub, 'Indexed1')
+    sys = SystemManager()
+    comparator = CompositeType(LongType(), AsciiType())
+    sys.create_column_family("PycassaTestKeyspace", "StandardComposite1", comparator_type=comparator)
+    composite_pool = ConnectionPool(keyspace="PycassaTestKeyspace",
+                                    credentials=credentials, timeout=1.0)
+    composite_cf = ColumnFamily(composite_pool, "StandardComposite1", dict_class=TestDict)
+    composite_pool_stub = ConnectionPoolStub(keyspace='PycassaTestKeyspace',
+                                             credentials=credentials, timeout=1.0)
+    composite_cf_stub = ColumnFamilyStub(composite_pool_stub, "StandardComposite1", dict_class=TestDict)
 
 
 def teardown_module():
     cf.truncate()
     cf_stub.truncate()
+    composite_cf.truncate()
+    composite_cf_stub.truncate()
     indexed_cf.truncate()
     indexed_cf_stub.truncate()
     pool.dispose()
@@ -44,7 +56,7 @@ class TestColumnFamilyStub(unittest.TestCase):
         pass
 
     def tearDown(self):
-        for test_cf in (cf, cf_stub):
+        for test_cf in (cf, cf_stub, composite_cf, composite_cf_stub):
             for key, columns in test_cf.get_range():
                 test_cf.remove(key)
 
@@ -83,6 +95,24 @@ class TestColumnFamilyStub(unittest.TestCase):
             ts = test_cf.insert(key, columns)
             assert_true(isinstance(ts, (int, long)))
             assert_equal(test_cf.get(key, column_start='b', column_finish='c'), {'b': 'val2', 'c': 'val3'})
+
+    def test_insert_get_composite_columns_inclusive(self):
+        key = 'TestColumnFamily.test_insert_get_columns_inclusive'
+        columns = {(1, 'a'): 'val1', (2, 'b'): 'val2', (3, 'c'): 'val3', (4, 'd'): 'val4'}
+        for test_cf in (composite_cf, composite_cf_stub):
+            assert_raises(NotFoundException, test_cf.get, key)
+            ts = test_cf.insert(key, columns)
+            assert_true(isinstance(ts, (int, long)))
+            assert_equal(test_cf.get(key, column_start=((1, True), ), column_count=2), {(1, 'a'): 'val1', (2, 'b'): 'val2'})
+
+    def test_insert_get_composite_columns_exclusive(self):
+        key = 'TestColumnFamily.test_insert_get_columns_exclusive'
+        columns = {(1, 'a'): 'val1', (2, 'b'): 'val2', (3, 'c'): 'val3', (4, 'd'): 'val4'}
+        for test_cf in (composite_cf, composite_cf_stub):
+            assert_raises(NotFoundException, test_cf.get, key)
+            ts = test_cf.insert(key, columns)
+            assert_true(isinstance(ts, (int, long)))
+            assert_equal(test_cf.get(key, column_start=((1, False), ), column_count=2), {(2, 'b'): 'val2', (3, 'c'): 'val3'})
 
     def test_insert_get_column_start_and_reversed(self):
         key = 'TestColumnFamily.test_insert_get_column_start_and_finish_reversed'
