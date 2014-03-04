@@ -172,12 +172,32 @@ class ColumnFamilyStub(object):
         return OrderedDict(sliced_items)
 
     def _is_column_in_range(self, k, columns, column_start, column_finish, column_reversed):
+        if columns:
+            return k in columns
+
+        if column_start is not None and not isinstance(column_start, (int, bool, basestring)) and isinstance(column_start[0], tuple):
+            inclusive = column_start[0][1]
+            column_start = tuple(map(lambda e: e[0] if isinstance(e, tuple) else e, column_start))
+        else:
+            inclusive = True
+
         lower_bound = column_start if not column_reversed else column_finish
         upper_bound = column_finish if not column_reversed else column_start
 
-        if columns:
-            return k in columns
-        return (not lower_bound or k >= lower_bound) and (not upper_bound or k <= upper_bound)
+        if inclusive:
+            return (not lower_bound or self._compare_elements(lower_bound, k, operator.ge)) and (not upper_bound or self._compare_elements(upper_bound, k, operator.le))
+        else:
+            return (not lower_bound or self._compare_elements(lower_bound, k, operator.gt)) and (not upper_bound or self._compare_elements(upper_bound, k, operator.lt))
+
+    def _compare_elements(self, right, left, compare):
+        if right:
+            for i in range(len(right)):
+                if not compare(left[i], right[i]):
+                    return False
+
+            return True
+        else:
+            return compare(left, right)
 
     def multiget(self, keys, columns=None, column_start=None, column_finish=None,
                  column_reversed=False, column_count=100, include_timestamp=False, **kwargs):
